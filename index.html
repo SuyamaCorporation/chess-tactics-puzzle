@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chess Tactics Puzzle Trainer</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  .chess-cell { width: 56px; height: 56px; display: flex; align-items: center; justify-content: center; font-size: 34px; cursor: pointer; user-select: none; position: relative; }
+  .chess-cell.selected { outline: 3px solid #f59e0b; outline-offset: -3px; }
+  .chess-cell.hint-highlight { background: rgba(251,191,36,0.5) !important; }
+  .chess-cell.valid-move { }
+  .chess-cell.valid-move::after { content: ''; position: absolute; width: 16px; height: 16px; border-radius: 50%; background: rgba(0,0,0,0.2); }
+  @media (max-width: 480px) {
+    .chess-cell { width: 40px; height: 40px; font-size: 24px; }
+    .chess-cell.valid-move::after { width: 12px; height: 12px; }
+  }
+</style>
+</head>
+<body class="bg-gray-100 min-h-screen font-sans">
+<div class="max-w-2xl mx-auto px-4 py-8">
+  <h1 class="text-2xl font-bold text-gray-800 mb-1">Chess Tactics Puzzle Trainer</h1>
+  <p class="text-gray-500 text-sm mb-4">Find the mate-in-1. Click a piece, then click its destination.</p>
+
+  <!-- Stats -->
+  <div class="flex gap-4 mb-4 flex-wrap">
+    <div class="bg-white rounded-xl px-4 py-2 shadow-sm text-center">
+      <div class="text-xs text-gray-400">Solved</div>
+      <div id="statSolved" class="font-bold text-gray-800">0</div>
+    </div>
+    <div class="bg-white rounded-xl px-4 py-2 shadow-sm text-center">
+      <div class="text-xs text-gray-400">Attempts</div>
+      <div id="statAttempts" class="font-bold text-gray-800">0</div>
+    </div>
+    <div class="bg-white rounded-xl px-4 py-2 shadow-sm text-center">
+      <div class="text-xs text-gray-400">Accuracy</div>
+      <div id="statAccuracy" class="font-bold text-gray-800">—</div>
+    </div>
+    <div class="bg-white rounded-xl px-4 py-2 shadow-sm text-center">
+      <div class="text-xs text-gray-400">Streak</div>
+      <div id="statStreak" class="font-bold text-gray-800">0 🔥</div>
+    </div>
+    <div class="bg-white rounded-xl px-4 py-2 shadow-sm text-center">
+      <div class="text-xs text-gray-400">Hints Left</div>
+      <div id="statHints" class="font-bold text-yellow-600">3</div>
+    </div>
+  </div>
+
+  <!-- Puzzle info -->
+  <div class="bg-white rounded-xl shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <span id="puzzleTitle" class="font-semibold text-gray-700">Puzzle 1 / 15</span>
+      <span id="turnLabel" class="text-sm px-2 py-0.5 rounded bg-gray-100 text-gray-600"></span>
+    </div>
+    <div id="feedback" class="text-sm font-medium min-h-5"></div>
+  </div>
+
+  <!-- Board -->
+  <div class="bg-white rounded-xl shadow p-2 mb-4 inline-block">
+    <div id="board" class="grid" style="grid-template-columns: repeat(8, auto);"></div>
+  </div>
+
+  <!-- Controls -->
+  <div class="flex gap-3 flex-wrap">
+    <button onclick="useHint()" class="px-4 py-2 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-white font-semibold text-sm" aria-label="Use a hint">Hint (3)</button>
+    <button onclick="nextPuzzle()" class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm" aria-label="Skip to next puzzle">Next Puzzle</button>
+    <button onclick="resetStats()" class="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-700 text-sm" aria-label="Reset all statistics">Reset Stats</button>
+  </div>
+</div>
+
+<script>
+const LS_KEY = 'ctpt_data';
+
+// Puzzle format: board[row][col] = piece (uppercase=white, lowercase=black, '.'=empty)
+// solution: [fromRow, fromCol, toRow, toCol]
+// White is on bottom (rows 6-7), Black on top (rows 0-1) unless specified
+const PUZZLES = [
+  {
+    title: "Back rank mate",
+    turn: "White",
+    board: [
+      ['r','.','.','.','.','.','.','k'],
+      ['.','.','.','.','.','.','.','p'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','P','P'],
+      ['R','.','.','.','.','.','.','.'],
+    ],
+    solution: [7,0,7,7]
+  },
+  {
+    title: "Queen delivers",
+    turn: "White",
+    board: [
+      ['r','.','b','q','k','b','n','r'],
+      ['p','p','p','p','.','p','p','p'],
+      ['.','.','n','.','.','.','.','p'],
+      ['.','.','.','.','p','.','.','Q'],
+      ['.','.','B','.','.','.','.','P'],
+      ['.','.','.','.','.','.','.','.'],
+      ['P','P','P','P','.','P','P','.'],
+      ['R','N','B','.','K','.','.','R'],
+    ],
+    solution: [3,7,1,7]
+  },
+  {
+    title: "Knight fork leads to mate",
+    turn: "White",
+    board: [
+      ['.','.','.','.','k','.','.','r'],
+      ['.','.','.','.','.','.','.','p'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','N','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','K','.','.','R'],
+    ],
+    solution: [3,6,2,4]
+  },
+  {
+    title: "Rook on 7th",
+    turn: "White",
+    board: [
+      ['.','.','.','.','k','.','.','r'],
+      ['.','.','.','.','.','R','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','K','.','.','R'],
+    ],
+    solution: [1,5,1,4]
+  },
+  {
+    title: "Bishop sacrifice",
+    turn: "White",
+    board: [
+      ['r','n','b','.','k','.','.','r'],
+      ['p','p','.','.','.','.','p','p'],
+      ['.','.','p','.','.','.','.','.'],
+      ['.','.','.','p','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','B','.','.'],
+      ['P','P','P','.','.','.','P','P'],
+      ['R','N','.','.','K','.','.','R'],
+    ],
+    solution: [5,5,1,1]
+  },
+  {
+    title: "Queen smothered",
+    turn: "White",
+    board: [
+      ['.','.','.','.','k','.','.','r'],
+      ['.','.','.','.','p','p','p','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','Q','.','K','.','.','R'],
+    ],
+    solution: [7,2,0,2]
+  },
+  {
+    title: "Pin and win",
+    turn: "White",
+    board: [
+      ['r','.','.','.','.','.','.','k'],
+      ['.','.','.','.','.','.','p','p'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','P','P'],
+      ['.','.','R','.','K','.','.','R'],
+    ],
+    solution: [7,2,7,7]
+  },
+  {
+    title: "Diagonal queen",
+    turn: "White",
+    board: [
+      ['r','n','b','.','k','.','.','r'],
+      ['p','p','p','.','.','p','p','p'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','p','.','.','.','B'],
+      ['.','.','.','.','.','.','.','Q'],
+      ['.','.','.','.','.','.','.','.'],
+      ['P','P','P','.','.','.','P','P'],
+      ['R','N','B','.','K','.','.','R'],
+    ],
+    solution: [4,7,1,4]
+  },
+  {
+    title: "Hook mate",
+    turn: "White",
+    board: [
+      ['.','.','.','.','k','.','.','r'],
+      ['.','.','.','.','.','.','p','.'],
+      ['.','.','.','.','.','.','N','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','K','.','R','.'],
+    ],
+    solution: [7,6,7,7]
+  },
+  {
+    title: "Arabian mate",
+    turn: "White",
+    board: [
+      ['.','.','.','.','.','.','k','.'],
+      ['.','.','.','.','.','.','.','R'],
+      ['.','.','.','.','.','.','N','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','K','.','.','R'],
+    ],
+    solution: [1,7,0,7]
+  },
+  {
+    title: "Corridor mate",
+    turn: "White",
+    board: [
+      ['k','.','.','.','.','.','.','r'],
+      ['p','.','.','.','.','.','.','p'],
+      ['.','p','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['R','.','.','.','K','.','.','R'],
+    ],
+    solution: [7,0,0,0]
+  },
+  {
+    title: "Two rooks",
+    turn: "White",
+    board: [
+      ['.','.','.','.','k','.','.','r'],
+      ['p','p','.','.','.','.','.','p'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['R','.','.','.','.','.','R','K'],
+    ],
+    solution: [7,0,0,0]
+  },
+  {
+    title: "Queen and bishop",
+    turn: "White",
+    board: [
+      ['r','n','.','.','k','.','.','r'],
+      ['p','p','.','.','.','.','p','p'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','p','.','.','.','.'],
+      ['.','.','.','.','.','.','B','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['P','P','P','.','.','.','P','P'],
+      ['R','N','.','Q','K','.','.','R'],
+    ],
+    solution: [3,7,0,4]
+  },
+  {
+    title: "Queening mate",
+    turn: "White",
+    board: [
+      ['.','.','.','.','k','.','.','r'],
+      ['.','.','.','.','.','.','.','P'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','K','.','.','R'],
+    ],
+    solution: [1,7,0,7]
+  },
+  {
+    title: "Smothered mate",
+    turn: "Black",
+    board: [
+      ['.','.','.','.','K','.','.','R'],
+      ['.','.','.','.','.','.','.','P'],
+      ['.','.','.','.','.','.','N','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','.','.','.','.'],
+      ['.','.','.','.','k','.','.','r'],
+    ],
+    solution: [2,6,1,4]
+  },
+];
+
+const PIECE_UNICODE = {
+  'K': '♔', 'Q': '♕', 'R': '♖', 'B': '♗', 'N': '♘', 'P': '♙',
+  'k': '♚', 'q': '♛', 'r': '♜', 'b': '♝', 'n': '♞', 'p': '♟',
+};
+const PIECE_COLORS = { upper: '#1e1b4b', lower: '#dc2626' };
+
+let stats = { solved: 0, attempts: 0, streak: 0 };
+let hints = 3;
+let currentPuzzleIdx = 0;
+let selectedCell = null;
+let puzzleSolved = false;
+
+function loadStats() {
+  try {
+    const s = localStorage.getItem(LS_KEY);
+    if (s) stats = JSON.parse(s);
+  } catch(e) {}
+}
+
+function saveStats() {
+  localStorage.setItem(LS_KEY, JSON.stringify(stats));
+}
+
+function resetStats() {
+  stats = { solved: 0, attempts: 0, streak: 0 };
+  saveStats();
+  hints = 3;
+  updateHUD();
+}
+
+function updateHUD() {
+  document.getElementById('statSolved').textContent = stats.solved;
+  document.getElementById('statAttempts').textContent = stats.attempts;
+  const acc = stats.attempts > 0 ? Math.round(stats.solved / stats.attempts * 100) + '%' : '—';
+  document.getElementById('statAccuracy').textContent = acc;
+  document.getElementById('statStreak').textContent = stats.streak + ' 🔥';
+  document.getElementById('statHints').textContent = hints;
+  const hintBtn = document.querySelector('button[onclick="useHint()"]');
+  hintBtn.textContent = 'Hint (' + hints + ')';
+}
+
+function getPuzzle() { return PUZZLES[currentPuzzleIdx]; }
+
+function renderBoard() {
+  const puzzle = getPuzzle();
+  const boardEl = document.getElementById('board');
+  boardEl.innerHTML = '';
+  selectedCell = null;
+
+  document.getElementById('puzzleTitle').textContent = 'Puzzle ' + (currentPuzzleIdx + 1) + ' / ' + PUZZLES.length;
+  document.getElementById('turnLabel').textContent = puzzle.turn + ' to move';
+  document.getElementById('feedback').textContent = '';
+  document.getElementById('feedback').className = 'text-sm font-medium min-h-5';
+
+  for (let row = 0; row < 8; row++) {
+    for (let col = 0; col < 8; col++) {
+      const cell = document.createElement('div');
+      const isLight = (row + col) % 2 === 0;
+      cell.className = 'chess-cell';
+      cell.style.backgroundColor = isLight ? '#f0d9b5' : '#b58863';
+      cell.dataset.row = row;
+      cell.dataset.col = col;
+      cell.setAttribute('aria-label', `Square row ${row + 1} col ${col + 1}`);
+
+      const piece = puzzle.board[row][col];
+      if (piece !== '.') {
+        cell.textContent = PIECE_UNICODE[piece] || piece;
+        cell.style.color = piece === piece.toUpperCase() ? '#1e1b4b' : '#7f1d1d';
+        cell.style.textShadow = piece === piece.toUpperCase()
+          ? '0 1px 2px rgba(0,0,0,0.3)'
+          : '0 1px 2px rgba(0,0,0,0.4)';
+      }
+
+      cell.addEventListener('click', () => handleCellClick(row, col));
+      boardEl.appendChild(cell);
+    }
+  }
+}
+
+function getCellEl(row, col) {
+  return document.querySelector(`.chess-cell[data-row="${row}"][data-col="${col}"]`);
+}
+
+function handleCellClick(row, col) {
+  if (puzzleSolved) return;
+  const puzzle = getPuzzle();
+  const piece = puzzle.board[row][col];
+  const isWhitePiece = piece !== '.' && piece === piece.toUpperCase();
+  const isBlackPiece = piece !== '.' && piece === piece.toLowerCase();
+  const movingWhite = puzzle.turn === 'White';
+
+  if (selectedCell === null) {
+    // Select a piece of the moving side
+    if (piece === '.') return;
+    if (movingWhite && !isWhitePiece) return;
+    if (!movingWhite && !isBlackPiece) return;
+    selectedCell = { row, col };
+    getCellEl(row, col).classList.add('selected');
+  } else {
+    const fromRow = selectedCell.row, fromCol = selectedCell.col;
+    if (fromRow === row && fromCol === col) {
+      // Deselect
+      getCellEl(row, col).classList.remove('selected');
+      selectedCell = null;
+      return;
+    }
+    // Try move
+    getCellEl(fromRow, fromCol).classList.remove('selected');
+    selectedCell = null;
+    tryMove(fromRow, fromCol, row, col);
+  }
+}
+
+function tryMove(fromRow, fromCol, toRow, toCol) {
+  const puzzle = getPuzzle();
+  const [sr, sc, er, ec] = puzzle.solution;
+  stats.attempts++;
+  saveStats();
+
+  if (fromRow === sr && fromCol === sc && toRow === er && toCol === ec) {
+    // Correct!
+    stats.solved++;
+    stats.streak++;
+    saveStats();
+    puzzleSolved = true;
+    // Animate the move
+    puzzle.board[toRow][toCol] = puzzle.board[fromRow][fromCol];
+    puzzle.board[fromRow][fromCol] = '.';
+    renderBoard();
+    const fb = document.getElementById('feedback');
+    fb.textContent = '✓ Correct! Checkmate!';
+    fb.className = 'text-sm font-medium text-green-600';
+    setTimeout(() => { nextPuzzle(); }, 1500);
+  } else {
+    stats.streak = 0;
+    saveStats();
+    const fb = document.getElementById('feedback');
+    fb.textContent = '✗ Try again. That\'s not the right move.';
+    fb.className = 'text-sm font-medium text-red-500';
+    setTimeout(() => {
+      if (!puzzleSolved) {
+        fb.textContent = '';
+      }
+    }, 2000);
+  }
+  updateHUD();
+}
+
+function useHint() {
+  if (hints <= 0 || puzzleSolved) return;
+  hints--;
+  updateHUD();
+  const puzzle = getPuzzle();
+  const [sr, sc] = puzzle.solution;
+  // Highlight the piece to move
+  document.querySelectorAll('.chess-cell').forEach(c => c.classList.remove('hint-highlight'));
+  const cell = getCellEl(sr, sc);
+  if (cell) cell.classList.add('hint-highlight');
+  const fb = document.getElementById('feedback');
+  fb.textContent = 'Hint: move the highlighted piece.';
+  fb.className = 'text-sm font-medium text-yellow-600';
+}
+
+function nextPuzzle() {
+  puzzleSolved = false;
+  currentPuzzleIdx = (currentPuzzleIdx + 1) % PUZZLES.length;
+  hints = 3;
+  updateHUD();
+  renderBoard();
+}
+
+loadStats();
+renderBoard();
+updateHUD();
+</script>
+</body>
+</html>
